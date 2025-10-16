@@ -2,10 +2,9 @@
 # Dependencies for facial recognition and GUI
 
 face-recognition==1.3.0
-opencv-python==4.8.1.78
-dlib==19.24.2
-numpy==1.24.3
-Pillow==10.0.1
+opencv-python==4.5.5.64
+numpy==1.21.6
+Pillow==9.5.0
 
 # Additional useful libraries for file handling
 glob2==0.7
