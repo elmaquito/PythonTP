@@ -14,7 +14,7 @@ This application allows restaurants to control access through facial recognition
 - **Dual Access Modes**: Camera-based or file upload identification
 - **Real-time Processing**: Live camera feed with instant recognition
 
-## 🚀 Installation
+## 🚀 Installation & Quick Start
 
 ### Prerequisites
 
@@ -22,7 +22,27 @@ This application allows restaurants to control access through facial recognition
 - Webcam (optional, for live recognition)
 - Windows/macOS/Linux compatible
 
-### Installation Steps
+### Quick Start (Recommended)
+
+**Windows Users:**
+```bash
+# Double-click start.bat or run in PowerShell:
+.\start.bat
+```
+
+**All Platforms:**
+```bash
+# Option 1: Demo version (works immediately)
+python demo.py
+
+# Option 2: Full version with authentication
+python main.py
+
+# Option 3: Interactive launcher
+python launcher.py
+```
+
+### Full Installation Steps
 
 1. **Clone the repository**
    ```bash
@@ -30,14 +50,16 @@ This application allows restaurants to control access through facial recognition
    cd PythonTP
    ```
 
-2. **Install dependencies**
+2. **Install dependencies (optional for demo)**
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Verify installation**
+3. **Run the application**
    ```bash
-   python main.py
+   python main.py  # Full version
+   # OR
+   python demo.py  # Demo version (no dependencies needed)
    ```
 
 ### Troubleshooting Installation
