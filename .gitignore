@@ -1,4 +1,129 @@
 
+# Restaurant Access Control System - .gitignore
+# Optimized ignore patterns for Python project
 
-#Ignore vscode AI rules
-.github\instructions\codacy.instructions.md
+# === PYTHON ===
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+
+# === VIRTUAL ENVIRONMENTS ===
+.venv/
+venv/
+env/
+ENV/
+
+# === APPLICATION SPECIFIC ===
+# Student data and images (sensitive)
+students.json
+students_*.json
+images/*.jpg
+images/*.jpeg
+images/*.png
+images/*.bmp
+!images/README.md
+
+# Backups and logs
+backups/
+logs/
+*.log
+*.log.*
+
+# Temporary test files
+*_test.json
+test_*.json
+temp_*.json
+
+# === IDE AND EDITORS ===
+# VS Code
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json.template
+
+# PyCharm
+.idea/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# === SYSTEM FILES ===
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.nfs*
+
+# === TEMPORARY FILES ===
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# === JUPYTER NOTEBOOKS ===
+.ipynb_checkpoints
+
+# === TESTING ===
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+
+# === DOCUMENTATION ===
+docs/_build/
+
+# === SPECIFIC TO PROJECT ===
+# AI rules (keeping original rule)
+.github/instructions/codacy.instructions.md
+
+# Configuration overrides (if any)
+config_local.py
+local_settings.py
+
+# Performance profiling
+*.prof
+
+# Database migrations (if added later)
+migrations/versions/*.py
+!migrations/versions/__init__.py
