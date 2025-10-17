@@ -1,0 +1,11 @@
+{
+    "imartinez": {
+        "first_name": "ismael",
+        "last_name": "martinez",
+        "image_path": "images\\imartinez_ismael_martinez.jpg",
+        "balance": 42.0,
+        "created_date": "2025-10-17T09:41:34.952044",
+        "last_access": "2025-10-17T09:42:04.958691",
+        "access_count": 2
+    }
+}

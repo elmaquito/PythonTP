@@ -325,10 +325,8 @@ class RestaurantAccessGUI:
             self.camera_btn.config(text="Stop Camera")
             self.capture_btn.config(state=tk.NORMAL)
             
-            # Start camera thread
-            self.camera_thread = threading.Thread(target=self.update_camera_feed)
-            self.camera_thread.daemon = True
-            self.camera_thread.start()
+            # Start camera feed using Tkinter's after method (no thread needed)
+            self.update_camera_feed()
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to start camera: {e}")
@@ -339,40 +337,49 @@ class RestaurantAccessGUI:
             self.camera_active = False
             if hasattr(self, 'cap'):
                 self.cap.release()
-            self.camera_btn.config(text="Start Camera")
-            self.capture_btn.config(state=tk.DISABLED)
-            self.camera_frame_widget.config(image='', text="Camera stopped")
+            # Check if widgets exist before trying to configure them
+            try:
+                if hasattr(self, 'camera_btn') and self.camera_btn.winfo_exists():
+                    self.camera_btn.config(text="Start Camera")
+                if hasattr(self, 'capture_btn') and self.capture_btn.winfo_exists():
+                    self.capture_btn.config(state=tk.DISABLED)
+                if hasattr(self, 'camera_frame_widget') and self.camera_frame_widget.winfo_exists():
+                    self.camera_frame_widget.config(image='', text="Camera stopped")
+            except tk.TclError:
+                # Widgets may have been destroyed, ignore the error
+                pass
     
     def update_camera_feed(self):
-        """Update camera feed in GUI"""
-        if not CV2_AVAILABLE:
+        """Update camera feed in GUI using scheduled callbacks instead of continuous loop"""
+        if not CV2_AVAILABLE or not self.camera_active:
             return
             
-        while self.camera_active:
-            try:
-                ret, frame = self.cap.read()
-                if ret:
-                    # Convert frame to display format
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    frame = cv2.resize(frame, (640, 480))
+        try:
+            ret, frame = self.cap.read()
+            if ret:
+                # Convert frame to display format
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame = cv2.resize(frame, (640, 480))
+                
+                # Convert to PhotoImage
+                if PIL_AVAILABLE:
+                    image = Image.fromarray(frame)
+                    photo = ImageTk.PhotoImage(image)
                     
-                    # Convert to PhotoImage
-                    if PIL_AVAILABLE:
-                        image = Image.fromarray(frame)
-                        photo = ImageTk.PhotoImage(image)
-                        
-                        # Update GUI (must be done in main thread)
-                        self.root.after(0, lambda: self.camera_frame_widget.config(image=photo, text=""))
-                        self.root.after(0, lambda: setattr(self.camera_frame_widget, 'image', photo))
-                    else:
-                        # Without PIL, just show a message
-                        self.root.after(0, lambda: self.camera_frame_widget.config(text="Camera active (PIL not available for display)"))
+                    # Update GUI in main thread
+                    self.camera_frame_widget.config(image=photo, text="")
+                    self.camera_frame_widget.image = photo  # Keep a reference
+                else:
+                    # Without PIL, just show a message
+                    self.camera_frame_widget.config(text="Camera active (PIL not available for display)")
+            
+            # Schedule next update if camera is still active
+            if self.camera_active:
+                self.root.after(33, self.update_camera_feed)  # ~30 FPS (33ms)
                 
-                time.sleep(0.03)  # ~30 FPS
-                
-            except Exception as e:
-                print(f"Camera feed error: {e}")
-                break
+        except Exception as e:
+            print(f"Camera feed error: {e}")
+            self.camera_active = False
     
     def capture_and_identify(self):
         """Capture current frame and identify student"""
@@ -380,15 +387,45 @@ class RestaurantAccessGUI:
             messagebox.showwarning("Warning", "Camera is not active")
             return
         
-        if not FACE_RECOGNITION_AVAILABLE:
-            messagebox.showinfo("Face Recognition Not Available", 
-                               "Face recognition features are not available.\n" +
-                               "This will simulate recognition for demo purposes.")
-        
         try:
-            # Use face recognition utilities to capture and identify
-            student_id, confidence, captured_image = self.face_utils.identify_face_from_camera()
+            if not FACE_RECOGNITION_AVAILABLE:
+                # Use simulation from SimpleFaceRecognitionUtils
+                student_id, confidence, captured_image = self.face_utils.identify_face_from_camera()
+            else:
+                # Temporarily stop camera feed to avoid conflicts
+                was_active = self.camera_active
+                if was_active:
+                    self.camera_active = False
+                    
+                # Capture a single frame for identification
+                if hasattr(self, 'cap') and self.cap.isOpened():
+                    ret, frame = self.cap.read()
+                    if ret and CV2_AVAILABLE:
+                        # Convert BGR to RGB for face_recognition
+                        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        
+                        # Use face recognition to identify
+                        encoding = self.face_utils.encode_face_from_array(rgb_frame)
+                        
+                        if encoding is not None:
+                            student_id, confidence = self.face_utils.identify_face(encoding)
+                            captured_image = rgb_frame
+                        else:
+                            student_id, confidence = None, 0.0
+                            captured_image = None
+                    else:
+                        student_id, confidence = None, 0.0
+                        captured_image = None
+                else:
+                    student_id, confidence = None, 0.0
+                    captured_image = None
+                
+                # Restart camera feed if it was active
+                if 'was_active' in locals() and was_active:
+                    self.camera_active = True
+                    self.update_camera_feed()
             
+            # Process identification result
             if student_id:
                 # Get student info
                 student = self.db.get_student(student_id)
@@ -417,6 +454,10 @@ class RestaurantAccessGUI:
                                        foreground='red')
                 
         except Exception as e:
+            # Make sure to restart camera even if there's an error
+            if FACE_RECOGNITION_AVAILABLE and 'was_active' in locals() and was_active:
+                self.camera_active = True
+                self.update_camera_feed()
             messagebox.showerror("Error", f"Identification failed: {e}")
     
     def select_image_file(self):
