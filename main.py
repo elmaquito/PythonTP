@@ -31,14 +31,16 @@ class AdminAuthentication:
         Returns:
             True if authentication successful, False otherwise
         """
-        root = tk.Tk()
-        root.withdraw()  # Hide the main window
-        
+        # Try GUI authentication first
         try:
+            root = tk.Tk()
+            root.withdraw()  # Hide the main window
+            
             # Show authentication dialog
             credentials = self.show_login_dialog(root)
             
             if credentials is None:
+                root.destroy()
                 return False  # User cancelled
             
             username, password = credentials
@@ -49,17 +51,61 @@ class AdminAuthentication:
                 self.username = username
                 messagebox.showinfo("Authentication Successful", 
                                    f"Welcome, {username}!\nAccess granted to Restaurant Control System.")
+                root.destroy()
                 return True
             else:
                 messagebox.showerror("Authentication Failed", 
                                    "Invalid username or password.\nAccess denied.")
+                root.destroy()
                 return False
                 
         except Exception as e:
-            messagebox.showerror("Authentication Error", f"An error occurred: {e}")
-            return False
-        finally:
-            root.destroy()
+            print(f"GUI authentication failed: {e}")
+            print("Falling back to console authentication...")
+            return self.console_authenticate()
+    
+    def console_authenticate(self) -> bool:
+        """
+        Console-based authentication fallback
+        
+        Returns:
+            True if authentication successful, False otherwise
+        """
+        import getpass
+        
+        print("\n" + "="*50)
+        print("CONSOLE AUTHENTICATION")
+        print("="*50)
+        print("Available accounts:")
+        for user, pwd in self.DEFAULT_ADMIN_CREDENTIALS.items():
+            print(f"  Username: {user} | Password: {pwd}")
+        print("="*50)
+        
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                username = input("Username: ").strip()
+                password = getpass.getpass("Password: ").strip()
+                
+                if self.verify_credentials(username, password):
+                    self.authenticated = True
+                    self.username = username
+                    print(f"✅ Authentication successful! Welcome, {username}")
+                    return True
+                else:
+                    remaining = max_attempts - attempt - 1
+                    if remaining > 0:
+                        print(f"❌ Invalid credentials. {remaining} attempts remaining.")
+                    else:
+                        print("❌ Authentication failed. Maximum attempts reached.")
+                        
+            except KeyboardInterrupt:
+                print("\n❌ Authentication cancelled by user.")
+                return False
+            except Exception as e:
+                print(f"❌ Error during authentication: {e}")
+                
+        return False
     
     def show_login_dialog(self, parent) -> tuple:
         """
@@ -74,13 +120,25 @@ class AdminAuthentication:
         # Create login dialog
         dialog = tk.Toplevel(parent)
         dialog.title("Restaurant Access Control - Admin Login")
-        dialog.geometry("350x200")
+        dialog.geometry("400x280")
         dialog.resizable(False, False)
         dialog.configure(bg='#f0f0f0')
         
-        # Center the dialog
+        # Center the dialog on screen
         dialog.transient(parent)
         dialog.grab_set()
+        
+        # Position dialog in center of screen
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (400 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (280 // 2)
+        dialog.geometry(f"400x280+{x}+{y}")
+        
+        # Bring dialog to front and focus
+        dialog.lift()
+        dialog.attributes('-topmost', True)
+        dialog.after_idle(dialog.attributes, '-topmost', False)
+        dialog.focus_force()
         
         # Result variable
         result = None
@@ -137,11 +195,16 @@ class AdminAuthentication:
         tk.Label(dialog, text=info_text, font=('Arial', 8), bg='#f0f0f0', 
                 fg='#666666', justify=tk.LEFT).pack(pady=10)
         
-        # Focus on username entry
-        username_entry.focus()
+        # Focus on username entry after a brief delay
+        dialog.after(100, lambda: username_entry.focus_set())
         
         # Bind Enter key to login
         dialog.bind('<Return>', lambda e: on_login())
+        password_entry.bind('<Return>', lambda e: on_login())
+        
+        # Make sure dialog is visible
+        dialog.deiconify()
+        dialog.update()
         
         # Wait for dialog to close
         dialog.wait_window()
@@ -217,8 +280,9 @@ def main():
     print("Restaurant Access Control System")
     print("=" * 40)
     
-    # Check for test mode
+    # Check for special modes
     test_mode = len(sys.argv) > 1 and sys.argv[1] == "--test"
+    console_auth = len(sys.argv) > 1 and sys.argv[1] == "--console"
     
     # Check dependencies first
     deps_ok, missing = check_dependencies()
@@ -230,8 +294,16 @@ def main():
         print("Running in test mode - skipping authentication")
         auth.authenticated = True
         auth.username = "test_admin"
+    elif console_auth:
+        print("Using console authentication mode")
+        if not auth.console_authenticate():
+            print("Authentication failed or cancelled. Exiting.")
+            return 1
     else:
         print("Starting admin authentication...")
+        print("📋 Please check for the authentication dialog window!")
+        print("📋 Default credentials: admin / restaurant123")
+        print("📋 If dialog doesn't appear, try: python main.py --console")
         
         # Authenticate user
         if not auth.authenticate():
@@ -241,39 +313,33 @@ def main():
     print(f"Authentication successful. User: {auth.get_username()}")
     
     try:
-        if deps_ok:
-            print("All dependencies are available.")
-            print("Starting full version with face recognition...")
-            # Try to import the full GUI
-            try:
-                from gui import RestaurantAccessGUI
-                app = RestaurantAccessGUI()
-                print("Full GUI initialized successfully.")
-            except ImportError as e:
-                print(f"Could not import full GUI: {e}")
-                print("Falling back to demo version...")
-                from demo import DemoRestaurantGUI
-                app = DemoRestaurantGUI()
-                print("Demo GUI initialized successfully.")
-            except Exception as e:
-                print(f"Error initializing full GUI: {e}")
-                print("Falling back to demo version...")
-                from demo import DemoRestaurantGUI
-                app = DemoRestaurantGUI()
-                print("Demo GUI initialized successfully.")
-        else:
-            print("Missing dependencies:")
-            for package in missing:
-                print(f"  - {package}")
-            print("\\nStarting demo version instead...")
-            
-            # Import and use demo version
+        # Always try to load the full GUI first, regardless of dependencies
+        print("Attempting to start full version...")
+        
+        full_gui_loaded = False
+        try:
+            from gui import RestaurantAccessGUI
+            app = RestaurantAccessGUI()
+            print("✅ Full GUI with face recognition initialized successfully.")
+            full_gui_loaded = True
+        except ImportError as e:
+            print(f"⚠️  Could not import full GUI modules: {e}")
+            if not deps_ok:
+                print("Missing dependencies:")
+                for package in missing:
+                    print(f"  - {package}")
+        except Exception as e:
+            print(f"⚠️  Error initializing full GUI: {e}")
+        
+        # If full GUI failed, use demo version
+        if not full_gui_loaded:
+            print("📱 Starting demo version instead...")
             try:
                 from demo import DemoRestaurantGUI
                 app = DemoRestaurantGUI()
-                print("Demo GUI initialized successfully.")
+                print("✅ Demo GUI initialized successfully.")
             except Exception as e:
-                print(f"Error initializing demo GUI: {e}")
+                print(f"❌ Error initializing demo GUI: {e}")
                 return 1
         
         # Add authentication info to the app if available

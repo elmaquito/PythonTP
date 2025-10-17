@@ -6,13 +6,34 @@ Provides Tkinter-based interface for student management and access control
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import PhotoImage
-import cv2
-from PIL import Image, ImageTk
 import os
 import threading
 import time
 from db import StudentDatabase
-from face_recognition_utils import FaceRecognitionUtils
+
+# Try to import optional dependencies
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
+    print("Warning: OpenCV (cv2) not available - camera features will be disabled")
+
+try:
+    from PIL import Image, ImageTk
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    print("Warning: PIL not available - some image features will be limited")
+
+try:
+    from face_recognition_utils import FaceRecognitionUtils
+    FACE_RECOGNITION_AVAILABLE = True
+except ImportError:
+    FACE_RECOGNITION_AVAILABLE = False
+    print("Warning: Face recognition not available - using simulation mode")
+    # Import the simple version from demo
+    from demo import SimpleFaceRecognitionUtils as FaceRecognitionUtils
 
 
 class RestaurantAccessGUI:
@@ -287,6 +308,13 @@ class RestaurantAccessGUI:
     
     def start_camera(self):
         """Start camera feed"""
+        if not CV2_AVAILABLE:
+            messagebox.showerror("Camera Not Available", 
+                               "OpenCV (cv2) is not installed.\n" +
+                               "Camera functionality is not available.\n" +
+                               "Please use the 'Select Image File' option instead.")
+            return
+            
         try:
             self.cap = cv2.VideoCapture(0)
             if not self.cap.isOpened():
@@ -317,6 +345,9 @@ class RestaurantAccessGUI:
     
     def update_camera_feed(self):
         """Update camera feed in GUI"""
+        if not CV2_AVAILABLE:
+            return
+            
         while self.camera_active:
             try:
                 ret, frame = self.cap.read()
@@ -326,12 +357,16 @@ class RestaurantAccessGUI:
                     frame = cv2.resize(frame, (640, 480))
                     
                     # Convert to PhotoImage
-                    image = Image.fromarray(frame)
-                    photo = ImageTk.PhotoImage(image)
-                    
-                    # Update GUI (must be done in main thread)
-                    self.root.after(0, lambda: self.camera_frame_widget.config(image=photo, text=""))
-                    self.root.after(0, lambda: setattr(self.camera_frame_widget, 'image', photo))
+                    if PIL_AVAILABLE:
+                        image = Image.fromarray(frame)
+                        photo = ImageTk.PhotoImage(image)
+                        
+                        # Update GUI (must be done in main thread)
+                        self.root.after(0, lambda: self.camera_frame_widget.config(image=photo, text=""))
+                        self.root.after(0, lambda: setattr(self.camera_frame_widget, 'image', photo))
+                    else:
+                        # Without PIL, just show a message
+                        self.root.after(0, lambda: self.camera_frame_widget.config(text="Camera active (PIL not available for display)"))
                 
                 time.sleep(0.03)  # ~30 FPS
                 
@@ -345,8 +380,13 @@ class RestaurantAccessGUI:
             messagebox.showwarning("Warning", "Camera is not active")
             return
         
+        if not FACE_RECOGNITION_AVAILABLE:
+            messagebox.showinfo("Face Recognition Not Available", 
+                               "Face recognition features are not available.\n" +
+                               "This will simulate recognition for demo purposes.")
+        
         try:
-            # Capture frame
+            # Use face recognition utilities to capture and identify
             student_id, confidence, captured_image = self.face_utils.identify_face_from_camera()
             
             if student_id:

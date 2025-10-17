@@ -30,15 +30,16 @@ def main():
     
     # Show options
     print("Choose version to launch:")
-    print("1. Main Application (with authentication)")
-    print("2. Demo Version (quick start)")
-    print("3. Exit")
+    print("1. Main Application (GUI authentication)")
+    print("2. Main Application (console authentication)")
+    print("3. Demo Version (quick start)")
+    print("4. Exit")
     
     while True:
-        choice = input("\\nEnter your choice (1-3): ").strip()
+        choice = input("\\nEnter your choice (1-4): ").strip()
         
         if choice == '1':
-            print("\\n🚀 Starting main application...")
+            print("\\n🚀 Starting main application with GUI authentication...")
             try:
                 if venv_python:
                     subprocess.run([venv_python, "main.py"])
@@ -51,6 +52,19 @@ def main():
             break
             
         elif choice == '2':
+            print("\\n🚀 Starting main application with console authentication...")
+            try:
+                if venv_python:
+                    subprocess.run([venv_python, "main.py", "--console"])
+                else:
+                    subprocess.run([python_cmd, "main.py", "--console"])
+            except KeyboardInterrupt:
+                print("\\n❌ Application interrupted by user")
+            except Exception as e:
+                print(f"\\n❌ Error starting application: {e}")
+            break
+            
+        elif choice == '3':
             print("\\n🚀 Starting demo version...")
             try:
                 if venv_python:
@@ -63,12 +77,12 @@ def main():
                 print(f"\\n❌ Error starting demo: {e}")
             break
             
-        elif choice == '3':
+        elif choice == '4':
             print("\\n👋 Goodbye!")
             break
             
         else:
-            print("❌ Invalid choice. Please enter 1, 2, or 3.")
+            print("❌ Invalid choice. Please enter 1, 2, 3, or 4.")
     
     return 0
 
