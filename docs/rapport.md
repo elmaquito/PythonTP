@@ -47,14 +47,8 @@ Remarques:
 - Liste des reconnus: une colonne à droite affiche l'historique des reconnaissances (Nom, ID, Solde, Heure, Statut).
 - Audit: `db.py` écrit un journal d'audit (`access.log`) pour les opérations sensibles (déductions, ajouts, consultations de solde).
 - Rôles: ajout d'un compte restreint `StudentX` (rôle `student`) et logique pour masquer les options d'administration quand l'utilisateur est en rôle étudiant.
- - Rôles: ajout d'un compte restreint `StudentX` (rôle `student`) et logique pour masquer les options d'administration quand l'utilisateur est en rôle étudiant.
  - Logout / Switch User: menu "User" → "Switch User" / "Logout" implémenté; la fonctionnalité "Switch User" utilise désormais une boîte de dialogue de re-login en-process (pas de redémarrage), améliorant l'UX.
 
-Comportements retirés / modifiés:
-- Le bouton "My Balance" (présent auparavant pour un accès rapide) a été retiré pour simplifier l'UI et centraliser les consultations via l'onglet de gestion (admin) — les consultations sont auditables.
-- Plusieurs scripts d'aide et d'installation ont été déplacés dans `archive/`.
- - Le bouton "My Balance" (présent auparavant pour un accès rapide) a été retiré de la barre caméra. À la place, les utilisateurs en rôle `student` (par ex. `StudentX`) peuvent consulter leur solde via le menu `User → View My Balance`.
- - Plusieurs scripts d'aide et d'installation ont été déplacés dans `archive/`.
 
 ## 4. Décisions techniques récentes
 

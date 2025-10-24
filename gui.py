@@ -52,6 +52,15 @@ class RestaurantAccessGUI:
         self.root.title("Restaurant Access Control System")
         self.root.geometry("1000x700")
         self.root.configure(bg='#f0f0f0')
+        # Try to bring the main window to front so it is visible on startup
+        try:
+            self.root.lift()
+            self.root.attributes('-topmost', True)
+            self.root.update()
+            # Clear topmost shortly after so normal stacking resumes
+            self.root.after(100, lambda: self.root.attributes('-topmost', False))
+        except Exception:
+            pass
         
         # Initialize components
         self.db = StudentDatabase()
@@ -96,32 +105,68 @@ class RestaurantAccessGUI:
         style.configure('Success.TLabel', font=('Arial', 11), foreground='green', background='#f0f0f0')
         style.configure('Error.TLabel', font=('Arial', 11), foreground='red', background='#f0f0f0')
         style.configure('Big.TButton', font=('Arial', 12, 'bold'), padding=10)
+
+    def _rebuild_mode_frame(self):
+        """(Re)build the mode selection radios according to current user role.
+
+        This is called on initialization and after role changes to ensure the
+        admin option is hidden for student users.
+        """
+        try:
+            # Ensure mode_frame exists
+            if not hasattr(self, 'mode_frame') or self.mode_frame is None:
+                return
+
+            # Clear existing contents
+            for w in self.mode_frame.winfo_children():
+                w.destroy()
+
+            ttk.Label(self.mode_frame, text="Mode:", style='Header.TLabel').pack(side=tk.LEFT, padx=5)
+
+            self.access_radio = ttk.Radiobutton(self.mode_frame, text="Access Control",
+                                                variable=self.current_mode, value="access",
+                                                command=self.switch_mode)
+            self.access_radio.pack(side=tk.LEFT, padx=10)
+
+            # Only show admin/student management option for non-student users
+            if getattr(self, 'user_role', 'admin') != 'student':
+                self.admin_radio = ttk.Radiobutton(self.mode_frame, text="Student Management",
+                                                   variable=self.current_mode, value="admin",
+                                                   command=self.switch_mode)
+                self.admin_radio.pack(side=tk.LEFT, padx=10)
+            else:
+                self.admin_radio = None
+        except Exception:
+            pass
     
     def create_widgets(self):
         """Create and layout GUI widgets"""
-        # Build user menu
-        self.refresh_user_menu()
-        # Main title
-        title_label = ttk.Label(self.root, text="Restaurant Access Control System", 
+        # Top frame with title on the left and user controls on the right
+        top_frame = ttk.Frame(self.root)
+        top_frame.pack(fill=tk.X, pady=(10, 0), padx=10)
+
+        title_label = ttk.Label(top_frame, text="Restaurant Access Control System",
                                style='Title.TLabel')
-        title_label.pack(pady=20)
+        title_label.pack(side=tk.LEFT, pady=10)
+
+        # Visible Switch User button so users can change user without restarting
+        try:
+            self.switch_user_btn = ttk.Button(top_frame, text="Switch User",
+                                             command=self.open_relogin_dialog)
+            self.switch_user_btn.pack(side=tk.RIGHT)
+        except Exception:
+            # Best-effort: if button creation fails, ignore and rely on menu
+            pass
+
+        # Build user menu (menubar) after top frame created
+        self.refresh_user_menu()
         
-        # Mode selection frame
-        mode_frame = ttk.Frame(self.root)
-        mode_frame.pack(pady=10)
-        
-        ttk.Label(mode_frame, text="Mode:", style='Header.TLabel').pack(side=tk.LEFT, padx=5)
-        
-        access_radio = ttk.Radiobutton(mode_frame, text="Access Control", 
-                                      variable=self.current_mode, value="access",
-                                      command=self.switch_mode)
-        access_radio.pack(side=tk.LEFT, padx=10)
-        # Only show admin/student management option for admin users
-        if getattr(self, 'user_role', 'admin') != 'student':
-            admin_radio = ttk.Radiobutton(mode_frame, text="Student Management", 
-                                         variable=self.current_mode, value="admin",
-                                         command=self.switch_mode)
-            admin_radio.pack(side=tk.LEFT, padx=10)
+        # Mode selection frame (kept as an attribute so we can rebuild radios when role changes)
+        self.mode_frame = ttk.Frame(self.root)
+        self.mode_frame.pack(pady=10)
+
+        # Build the radio buttons according to current role
+        self._rebuild_mode_frame()
         
         # Main content frame
         self.content_frame = ttk.Frame(self.root)
@@ -163,7 +208,8 @@ class RestaurantAccessGUI:
             # Logout (full exit)
             user_menu.add_command(label="Logout", command=self.logout_and_restart)
 
-            menubar.add_cascade(label="User", menu=user_menu)
+            # Use the actual username (or 'Not logged') as the menubar label
+            menubar.add_cascade(label=user_label, menu=user_menu)
             try:
                 self.root.config(menu=menubar)
                 # store reference for potential updates
@@ -193,6 +239,11 @@ class RestaurantAccessGUI:
                 # Update local auth state
                 self.authenticated_user = username
                 self.user_role = auth.DEFAULT_USER_ROLES.get(username, 'admin')
+                # Rebuild the mode controls so admin options are hidden for student role
+                try:
+                    self._rebuild_mode_frame()
+                except Exception:
+                    pass
                 messagebox.showinfo("Switch User", f"Switched user to {username}")
 
                 # Refresh UI according to new role
@@ -311,10 +362,41 @@ class RestaurantAccessGUI:
         # Results section
         self.results_frame = ttk.LabelFrame(self.content_frame, text="Access Results", padding=15)
         self.results_frame.pack(fill=tk.BOTH, expand=True, pady=10)
-        
-        self.result_label = ttk.Label(self.results_frame, text="No identification attempts yet", 
-                                     font=('Arial', 12))
-        self.result_label.pack(pady=20)
+
+        # Use a full-width Text widget for access results so messages can be long
+        # and scrollable. It's kept read-only (disabled) and updated via helper.
+        self.result_text = tk.Text(self.results_frame, height=8, wrap='word', font=('Arial', 12))
+        self.result_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        self.result_text.configure(state='disabled')
+
+        # Initial message
+        self.set_result_text("No identification attempts yet")
+
+    def set_result_text(self, text: str, color: str = None) -> None:
+        """Helper to set the access result text in a read-only Text widget.
+
+        Args:
+            text: message to display
+            color: optional foreground color (e.g., 'green' or 'red')
+        """
+        try:
+            self.result_text.configure(state='normal')
+            self.result_text.delete('1.0', tk.END)
+            self.result_text.insert(tk.END, text)
+            # Configure color tag if requested
+            if color:
+                self.result_text.tag_configure('res_color', foreground=color)
+                self.result_text.tag_add('res_color', '1.0', tk.END)
+            else:
+                # remove tag if present
+                try:
+                    self.result_text.tag_delete('res_color')
+                except Exception:
+                    pass
+            self.result_text.configure(state='disabled')
+        except Exception:
+            # Fallback: ignore failures to update UI
+            pass
     
     def create_admin_widgets(self):
         """Create admin interface for student management"""
@@ -620,19 +702,17 @@ class RestaurantAccessGUI:
                         result_text += f"ID: {student_id}\n"
                         result_text += f"Confidence: {confidence:.2%}\n"
                         result_text += f"{message}"
-                        self.result_label.config(text=result_text, foreground='green')
+                        self.set_result_text(result_text, color='green')
                     else:
                         result_text = f"✗ ACCESS DENIED\n\n"
                         result_text += f"Student: {student['first_name']} {student['last_name']}\n"
                         result_text += f"ID: {student_id}\n"
                         result_text += f"Reason: {message}"
-                        self.result_label.config(text=result_text, foreground='red')
+                        self.set_result_text(result_text, color='red')
                 else:
-                    self.result_label.config(text=f"✗ Student ID {student_id} not found in database", 
-                                               foreground='red')
+                    self.set_result_text(f"✗ Student ID {student_id} not found in database", color='red')
             else:
-                self.result_label.config(text="✗ No face recognized or confidence too low", 
-                                         foreground='red')
+                self.set_result_text("✗ No face recognized or confidence too low", color='red')
 
             # Update recognized students list
             try:
@@ -729,19 +809,17 @@ class RestaurantAccessGUI:
                             result_text += f"ID: {student_id}\n"
                             result_text += f"Confidence: {confidence:.2%}\n"
                             result_text += f"{message}"
-                            self.result_label.config(text=result_text, foreground='green')
+                            self.set_result_text(result_text, color='green')
                         else:
                             result_text = f"✗ ACCESS DENIED\n\n"
                             result_text += f"Student: {student['first_name']} {student['last_name']}\n"
                             result_text += f"ID: {student_id}\n"
                             result_text += f"Reason: {message}"
-                            self.result_label.config(text=result_text, foreground='red')
+                            self.set_result_text(result_text, color='red')
                     else:
-                        self.result_label.config(text=f"✗ Student ID {student_id} not found in database", 
-                                               foreground='red')
+                        self.set_result_text(f"✗ Student ID {student_id} not found in database", color='red')
                 else:
-                    self.result_label.config(text="✗ No face recognized or confidence too low", 
-                                           foreground='red')
+                    self.set_result_text("✗ No face recognized or confidence too low", color='red')
                     
             except Exception as e:
                 messagebox.showerror("Error", f"Image processing failed: {e}")
