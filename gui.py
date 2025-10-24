@@ -9,6 +9,8 @@ from tkinter import PhotoImage
 import os
 import threading
 import time
+import sys
+import subprocess
 from db import StudentDatabase
 
 # Try to import optional dependencies
@@ -39,8 +41,13 @@ except ImportError:
 class RestaurantAccessGUI:
     """Main GUI application for restaurant access control"""
     
-    def __init__(self):
-        """Initialize the GUI application"""
+    def __init__(self, authenticated_user=None, user_role=None):
+        """Initialize the GUI application
+
+        Args:
+            authenticated_user: optional username of the authenticated user
+            user_role: optional role string ('admin' or 'student')
+        """
         self.root = tk.Tk()
         self.root.title("Restaurant Access Control System")
         self.root.geometry("1000x700")
@@ -53,10 +60,23 @@ class RestaurantAccessGUI:
         # Load known faces at startup
         self.face_utils.load_known_faces()
         
-        # GUI state variables
+        # Authentication info (may be provided by caller)
+        self.authenticated_user = authenticated_user
+        self.user_role = user_role or 'admin'
+
+    # GUI state variables
         self.current_mode = tk.StringVar(value="access")
         self.camera_active = False
         self.camera_thread = None
+
+        # Camera configuration (resize for faster rendering)
+        # Lower values = faster but lower quality
+        self.camera_width = 480
+        self.camera_height = 360
+
+        # Store last raw frame (RGB numpy array) for background identification
+        self._last_frame = None
+        self._identifying = False
         
         # Setup GUI
         self.setup_styles()
@@ -79,6 +99,8 @@ class RestaurantAccessGUI:
     
     def create_widgets(self):
         """Create and layout GUI widgets"""
+        # Build user menu
+        self.refresh_user_menu()
         # Main title
         title_label = ttk.Label(self.root, text="Restaurant Access Control System", 
                                style='Title.TLabel')
@@ -94,11 +116,12 @@ class RestaurantAccessGUI:
                                       variable=self.current_mode, value="access",
                                       command=self.switch_mode)
         access_radio.pack(side=tk.LEFT, padx=10)
-        
-        admin_radio = ttk.Radiobutton(mode_frame, text="Student Management", 
-                                     variable=self.current_mode, value="admin",
-                                     command=self.switch_mode)
-        admin_radio.pack(side=tk.LEFT, padx=10)
+        # Only show admin/student management option for admin users
+        if getattr(self, 'user_role', 'admin') != 'student':
+            admin_radio = ttk.Radiobutton(mode_frame, text="Student Management", 
+                                         variable=self.current_mode, value="admin",
+                                         command=self.switch_mode)
+            admin_radio.pack(side=tk.LEFT, padx=10)
         
         # Main content frame
         self.content_frame = ttk.Frame(self.root)
@@ -117,7 +140,105 @@ class RestaurantAccessGUI:
             self.create_access_control_widgets()
         else:
             self.create_admin_widgets()
-    
+        # After rebuilding mode widgets, refresh the user menu (role may hide options)
+        try:
+            self.refresh_user_menu()
+        except Exception:
+            pass
+
+    def refresh_user_menu(self):
+        """Rebuild the top-level user menu according to current authenticated user/role."""
+        try:
+            menubar = tk.Menu(self.root)
+            user_menu = tk.Menu(menubar, tearoff=0)
+            user_label = self.authenticated_user if getattr(self, 'authenticated_user', None) else 'Not logged'
+            user_menu.add_command(label=f"User: {user_label}", state='disabled')
+            user_menu.add_separator()
+
+            # If current role is student, offer quick balance view
+            if getattr(self, 'user_role', None) == 'student':
+                user_menu.add_command(label="View My Balance", command=self.view_my_balance)
+            # Switch user (in-process relogin)
+            user_menu.add_command(label="Switch User", command=self.open_relogin_dialog)
+            # Logout (full exit)
+            user_menu.add_command(label="Logout", command=self.logout_and_restart)
+
+            menubar.add_cascade(label="User", menu=user_menu)
+            try:
+                self.root.config(menu=menubar)
+                # store reference for potential updates
+                self._menubar = menubar
+                self._user_menu = user_menu
+            except Exception:
+                pass
+        except Exception:
+            # Best-effort menu rebuild; ignore failures
+            pass
+
+    def open_relogin_dialog(self):
+        """Open an in-process login dialog and update the authenticated user/role without restarting."""
+        try:
+            # Import auth helper lazily to avoid circular imports at module load
+            from main import AdminAuthentication
+
+            auth = AdminAuthentication()
+            # Use the GUI dialog directly (non-blocking within this call)
+            creds = auth.show_login_dialog(self.root)
+            if creds is None:
+                # user cancelled
+                return
+
+            username, password = creds
+            if auth.verify_credentials(username, password):
+                # Update local auth state
+                self.authenticated_user = username
+                self.user_role = auth.DEFAULT_USER_ROLES.get(username, 'admin')
+                messagebox.showinfo("Switch User", f"Switched user to {username}")
+
+                # Refresh UI according to new role
+                # If switching to student role, ensure admin widgets are hidden
+                try:
+                    # If currently in admin mode but role is student, switch to access mode
+                    if self.user_role == 'student' and self.current_mode.get() != 'access':
+                        self.current_mode.set('access')
+                        self.switch_mode()
+                    else:
+                        # Recreate the current mode to ensure widgets reflect role
+                        self.switch_mode()
+                except Exception:
+                    pass
+
+                # Rebuild menu to show/hide student options
+                self.refresh_user_menu()
+            else:
+                messagebox.showerror("Authentication Failed", "Invalid username or password.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Re-login failed: {e}")
+
+    def view_my_balance(self):
+        """Show the currently authenticated student's balance (student role)."""
+        try:
+            student_id = getattr(self, 'authenticated_user', None)
+            if not student_id:
+                messagebox.showinfo("My Balance", "No student account associated with this session.")
+                return
+
+            student = self.db.get_student(student_id)
+            if not student:
+                messagebox.showinfo("My Balance", f"Student record not found for ID: {student_id}")
+                return
+
+            balance = student.get('balance', 0.0)
+            messagebox.showinfo("My Balance", f"Student: {student.get('first_name','')} {student.get('last_name','')}\nID: {student_id}\nCurrent balance: €{balance:.2f}")
+
+            # Audit the balance consultation
+            try:
+                self.db.audit_balance_check(student_id, actor=getattr(self, 'authenticated_user', None))
+            except Exception:
+                pass
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to retrieve balance: {e}")
     def create_access_control_widgets(self):
         """Create access control interface"""
         # Stop camera if it was running
@@ -127,26 +248,58 @@ class RestaurantAccessGUI:
         ttk.Label(self.content_frame, text="Student Access Control", 
                  style='Header.TLabel').pack(pady=10)
         
-        # Camera section
+        # Camera section with side panel for recognized students
         camera_frame = ttk.LabelFrame(self.content_frame, text="Camera Access", padding=15)
-        camera_frame.pack(fill=tk.X, pady=10)
-        
+        camera_frame.pack(fill=tk.BOTH, pady=10, expand=True)
+
+        # Inner container to hold camera (left) and recognized list (right)
+        camera_inner = ttk.Frame(camera_frame)
+        camera_inner.pack(fill=tk.BOTH, expand=True)
+
+        # Left: camera controls + display
+        camera_left = ttk.Frame(camera_inner)
+        camera_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
         # Camera controls
-        camera_controls = ttk.Frame(camera_frame)
+        camera_controls = ttk.Frame(camera_left)
         camera_controls.pack(pady=5)
-        
+
         self.camera_btn = ttk.Button(camera_controls, text="Start Camera", 
                                     command=self.toggle_camera, style='Big.TButton')
         self.camera_btn.pack(side=tk.LEFT, padx=5)
-        
+
         self.capture_btn = ttk.Button(camera_controls, text="Capture & Identify", 
                                      command=self.capture_and_identify, style='Big.TButton',
                                      state=tk.DISABLED)
         self.capture_btn.pack(side=tk.LEFT, padx=5)
-        
+
+        # (No per-student quick balance button in this trimmed UI)
+
         # Camera display
-        self.camera_frame_widget = ttk.Label(camera_frame, text="Camera feed will appear here")
-        self.camera_frame_widget.pack(pady=10)
+        self.camera_frame_widget = ttk.Label(camera_left, text="Camera feed will appear here")
+        self.camera_frame_widget.pack(pady=10, fill=tk.BOTH, expand=True)
+
+        # Right: recognized students list
+        recognized_panel = ttk.LabelFrame(camera_inner, text="Recognized Students", padding=8)
+        recognized_panel.pack(side=tk.RIGHT, fill=tk.Y)
+
+        cols = ('Name', 'ID', 'Balance', 'Time', 'Status')
+        self.recognized_tree = ttk.Treeview(recognized_panel, columns=cols, show='headings', height=10)
+        for c in cols:
+            self.recognized_tree.heading(c, text=c)
+            # set reasonable width
+            if c == 'Name':
+                self.recognized_tree.column(c, width=140)
+            elif c == 'Time':
+                self.recognized_tree.column(c, width=120)
+            else:
+                self.recognized_tree.column(c, width=80)
+
+        self.recognized_tree.pack(side=tk.LEFT, fill=tk.Y, expand=False)
+
+        scrollbar = ttk.Scrollbar(recognized_panel, orient=tk.VERTICAL, command=self.recognized_tree.yview)
+        self.recognized_tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # File upload section
         file_frame = ttk.LabelFrame(self.content_frame, text="Upload Image", padding=15)
@@ -317,6 +470,12 @@ class RestaurantAccessGUI:
             
         try:
             self.cap = cv2.VideoCapture(0)
+            # Try to reduce resolution for better performance if supported
+            try:
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.camera_width))
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.camera_height))
+            except Exception:
+                pass
             if not self.cap.isOpened():
                 messagebox.showerror("Error", "Could not open camera")
                 return
@@ -359,13 +518,21 @@ class RestaurantAccessGUI:
             if ret:
                 # Convert frame to display format
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame = cv2.resize(frame, (640, 480))
-                
-                # Convert to PhotoImage
+
+                # Resize to configured camera size (faster if smaller)
+                frame = cv2.resize(frame, (self.camera_width, self.camera_height))
+
+                # Store last frame for identification (small copy)
+                try:
+                    self._last_frame = frame.copy()
+                except Exception:
+                    self._last_frame = frame
+
+                # Convert to PhotoImage for display
                 if PIL_AVAILABLE:
                     image = Image.fromarray(frame)
                     photo = ImageTk.PhotoImage(image)
-                    
+
                     # Update GUI in main thread
                     self.camera_frame_widget.config(image=photo, text="")
                     self.camera_frame_widget.image = photo  # Keep a reference
@@ -386,53 +553,67 @@ class RestaurantAccessGUI:
         if not self.camera_active:
             messagebox.showwarning("Warning", "Camera is not active")
             return
-        
+
+        # Prevent multiple simultaneous identification runs
+        if self._identifying:
+            messagebox.showinfo("Info", "Identification already in progress")
+            return
+
+        # Start identification in a background thread to avoid blocking the UI
+        self._identifying = True
+        thread = threading.Thread(target=self._capture_and_identify_worker, daemon=True)
+        thread.start()
+
+    def _capture_and_identify_worker(self):
+        """Background worker: uses the last captured frame for identification"""
         try:
+            # If face recognition not available, fall back to the utility that may use its own camera
             if not FACE_RECOGNITION_AVAILABLE:
-                # Use simulation from SimpleFaceRecognitionUtils
                 student_id, confidence, captured_image = self.face_utils.identify_face_from_camera()
             else:
-                # Temporarily stop camera feed to avoid conflicts
-                was_active = self.camera_active
-                if was_active:
-                    self.camera_active = False
-                    
-                # Capture a single frame for identification
-                if hasattr(self, 'cap') and self.cap.isOpened():
-                    ret, frame = self.cap.read()
-                    if ret and CV2_AVAILABLE:
-                        # Convert BGR to RGB for face_recognition
-                        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        
-                        # Use face recognition to identify
-                        encoding = self.face_utils.encode_face_from_array(rgb_frame)
-                        
-                        if encoding is not None:
-                            student_id, confidence = self.face_utils.identify_face(encoding)
-                            captured_image = rgb_frame
-                        else:
-                            student_id, confidence = None, 0.0
-                            captured_image = None
-                    else:
-                        student_id, confidence = None, 0.0
-                        captured_image = None
+                # Use the last frame captured by update_camera_feed
+                frame = None
+                try:
+                    frame = None if self._last_frame is None else self._last_frame.copy()
+                except Exception:
+                    frame = self._last_frame
+
+                if frame is None:
+                    # Nothing to identify
+                    self.root.after(0, lambda: self._apply_identification_result(None, 0.0, None, "No frame available for identification"))
+                    return
+
+                # Perform encoding and identification (CPU-bound, done in background)
+                encoding = self.face_utils.encode_face_from_array(frame)
+
+                if encoding is not None:
+                    student_id, confidence = self.face_utils.identify_face(encoding)
+                    captured_image = frame
                 else:
-                    student_id, confidence = None, 0.0
-                    captured_image = None
-                
-                # Restart camera feed if it was active
-                if 'was_active' in locals() and was_active:
-                    self.camera_active = True
-                    self.update_camera_feed()
-            
-            # Process identification result
+                    student_id, confidence, captured_image = None, 0.0, frame
+
+            # Schedule result handling on the main thread
+            self.root.after(0, lambda: self._apply_identification_result(student_id, confidence, captured_image, None))
+
+        except Exception as e:
+            self.root.after(0, lambda: self._apply_identification_result(None, 0.0, None, f"Identification error: {e}"))
+        finally:
+            self._identifying = False
+
+    def _apply_identification_result(self, student_id, confidence, captured_image, error_message):
+        """Apply identification result back on the GUI thread"""
+        try:
+            if error_message:
+                messagebox.showerror("Error", error_message)
+                return
+
             if student_id:
                 # Get student info
                 student = self.db.get_student(student_id)
                 if student:
                     # Attempt access
                     success, message = self.db.deduct_balance(student_id)
-                    
+
                     if success:
                         result_text = f"✓ ACCESS GRANTED\n\n"
                         result_text += f"Student: {student['first_name']} {student['last_name']}\n"
@@ -448,17 +629,73 @@ class RestaurantAccessGUI:
                         self.result_label.config(text=result_text, foreground='red')
                 else:
                     self.result_label.config(text=f"✗ Student ID {student_id} not found in database", 
-                                           foreground='red')
+                                               foreground='red')
             else:
                 self.result_label.config(text="✗ No face recognized or confidence too low", 
-                                       foreground='red')
-                
+                                         foreground='red')
+
+            # Update recognized students list
+            try:
+                if student_id:
+                    # fetch student info if available
+                    student = self.db.get_student(student_id)
+                    if student:
+                        name = f"{student['first_name']} {student['last_name']}"
+                        balance = student.get('balance', 0.0)
+                        status = 'Access Granted' if success else 'Access Denied'
+                        self.add_recognized_entry(name, student_id, balance, status)
+                    else:
+                        self.add_recognized_entry('Unknown student', '—', None, 'Unknown')
+                else:
+                    # Unknown student
+                    self.add_recognized_entry('Unknown student', '—', None, 'Unknown')
+            except Exception:
+                pass
+
+            # Optionally overlay name on camera display for a short time
+            if captured_image is not None and student_id:
+                try:
+                    # Draw the student's name on a copy of the frame and display it briefly
+                    display = captured_image.copy()
+                    # Resize to display size
+                    display = cv2.resize(display, (self.camera_width, self.camera_height))
+                    # Convert to PIL
+                    if PIL_AVAILABLE:
+                        img = Image.fromarray(display)
+                        from PIL import ImageDraw, ImageFont
+                        draw = ImageDraw.Draw(img)
+                        try:
+                            font = ImageFont.truetype("arial.ttf", 20)
+                        except Exception:
+                            font = None
+                        text = f"{student['first_name']} {student['last_name']}"
+                        draw.text((10, 10), text, fill=(255, 255, 0), font=font)
+                        photo = ImageTk.PhotoImage(img)
+                        self.camera_frame_widget.config(image=photo)
+                        self.camera_frame_widget.image = photo
+                        # Restore normal feed after a short delay
+                        self.root.after(1500, lambda: None)
+                except Exception:
+                    pass
+
         except Exception as e:
-            # Make sure to restart camera even if there's an error
-            if FACE_RECOGNITION_AVAILABLE and 'was_active' in locals() and was_active:
-                self.camera_active = True
-                self.update_camera_feed()
-            messagebox.showerror("Error", f"Identification failed: {e}")
+            messagebox.showerror("Error", f"Failed to apply identification result: {e}")
+
+    def add_recognized_entry(self, name: str, student_id: str, balance, status: str):
+        """Add an entry to the recognized students list with timestamp."""
+        try:
+            from datetime import datetime
+            ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            bal_str = f"€{balance:.2f}" if isinstance(balance, (int, float)) else '—'
+            # Insert into treeview
+            try:
+                self.recognized_tree.insert('', tk.END, values=(name, student_id, bal_str, ts, status))
+                # Scroll to bottom
+                self.recognized_tree.yview_moveto(1.0)
+            except Exception:
+                pass
+        except Exception:
+            pass
     
     def select_image_file(self):
         """Select and identify from image file"""
@@ -526,6 +763,8 @@ class RestaurantAccessGUI:
             else:
                 messagebox.showwarning("Invalid Image", message)
                 self.image_status_label.config(text="✗ Invalid image")
+
+    # per-student quick balance UI removed; use admin 'Check Balance' in management tab instead
     
     def take_student_photo(self):
         """Take photo with camera for new student"""
@@ -657,6 +896,12 @@ class RestaurantAccessGUI:
             student = self.db.get_student(student_id)
             
             if student:
+                # Audit the balance check (actor = authenticated user if available)
+                try:
+                    self.db.audit_balance_check(student_id, actor=getattr(self, 'authenticated_user', None))
+                except Exception:
+                    pass
+
                 self.balance_status.config(text=f"Current balance: €{student['balance']:.2f}")
             else:
                 self.balance_status.config(text="✗ Student not found")
@@ -668,6 +913,44 @@ class RestaurantAccessGUI:
         """Handle window closing"""
         self.stop_camera()
         self.root.destroy()
+
+    def switch_user(self):
+        """Prompt to switch user by restarting the application (simple flow)."""
+        try:
+            if messagebox.askyesno("Switch User", "Switching user will restart the application. Continue?"):
+                self.logout_and_restart()
+        except Exception:
+            # Fallback: just restart
+            self.logout_and_restart()
+
+    def logout_and_restart(self):
+        """Restart the application to allow login as a different user.
+
+        This launches main.py (if present) with the same Python executable and
+        exits the current process. It's a simple approach that avoids in-process
+        re-auth complexity.
+        """
+        try:
+            python = sys.executable
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            main_path = os.path.join(script_dir, 'main.py')
+            if os.path.exists(main_path):
+                subprocess.Popen([python, main_path])
+            else:
+                subprocess.Popen([python, os.path.abspath(__file__)])
+        except Exception as e:
+            print(f"Restart failed: {e}")
+        finally:
+            try:
+                self.root.quit()
+                self.root.destroy()
+            except Exception:
+                pass
+            # Ensure process exit
+            try:
+                sys.exit(0)
+            except SystemExit:
+                os._exit(0)
     
     def run(self):
         """Run the GUI application"""

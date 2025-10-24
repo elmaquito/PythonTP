@@ -16,13 +16,22 @@ class AdminAuthentication:
     DEFAULT_ADMIN_CREDENTIALS = {
         "admin": "restaurant123",
         "manager": "access456",
-        "supervisor": "control789"
+        "supervisor": "control789",
+        "StudentX": "studentx123"
+    }
+    # Map users to roles. 'admin' role has full access; 'student' role has restricted access.
+    DEFAULT_USER_ROLES = {
+        "admin": "admin",
+        "manager": "admin",
+        "supervisor": "admin",
+        "StudentX": "student"
     }
     
     def __init__(self):
         """Initialize authentication system"""
         self.authenticated = False
         self.username = None
+        self.role = None
     
     def authenticate(self) -> bool:
         """
@@ -49,6 +58,8 @@ class AdminAuthentication:
             if self.verify_credentials(username, password):
                 self.authenticated = True
                 self.username = username
+                # assign role if known
+                self.role = self.DEFAULT_USER_ROLES.get(username, 'admin')
                 messagebox.showinfo("Authentication Successful", 
                                    f"Welcome, {username}!\nAccess granted to Restaurant Control System.")
                 root.destroy()
@@ -90,6 +101,7 @@ class AdminAuthentication:
                 if self.verify_credentials(username, password):
                     self.authenticated = True
                     self.username = username
+                    self.role = self.DEFAULT_USER_ROLES.get(username, 'admin')
                     print(f"✅ Authentication successful! Welcome, {username}")
                     return True
                 else:
@@ -233,6 +245,10 @@ class AdminAuthentication:
         """Get authenticated username"""
         return self.username
 
+    def get_role(self) -> str:
+        """Get role of authenticated user"""
+        return self.role
+
 
 def check_dependencies():
     """
@@ -294,6 +310,7 @@ def main():
         print("Running in test mode - skipping authentication")
         auth.authenticated = True
         auth.username = "test_admin"
+        auth.role = 'admin'
     elif console_auth:
         print("Using console authentication mode")
         if not auth.console_authenticate():
@@ -319,7 +336,8 @@ def main():
         full_gui_loaded = False
         try:
             from gui import RestaurantAccessGUI
-            app = RestaurantAccessGUI()
+            # Pass authenticated user and role to GUI so it can adapt the UI
+            app = RestaurantAccessGUI(authenticated_user=auth.get_username(), user_role=(auth.get_role() or 'admin'))
             print("✅ Full GUI with face recognition initialized successfully.")
             full_gui_loaded = True
         except ImportError as e:
@@ -337,17 +355,18 @@ def main():
             try:
                 from demo import DemoRestaurantGUI
                 app = DemoRestaurantGUI()
+                # attach auth info if demo GUI doesn't accept constructor args
+                try:
+                    app.authenticated_user = auth.get_username()
+                    app.user_role = auth.get_role() or 'admin'
+                except Exception:
+                    pass
                 print("✅ Demo GUI initialized successfully.")
             except Exception as e:
                 print(f"❌ Error initializing demo GUI: {e}")
                 return 1
         
-        # Add authentication info to the app if available
-        try:
-            app.authenticated_user = auth.get_username()
-        except AttributeError:
-            # App doesn't have this attribute, that's fine
-            pass
+        # Authentication info passed to GUI (or attached for demo GUI above)
         
         if test_mode:
             print("Test mode: GUI initialization successful, exiting without running")

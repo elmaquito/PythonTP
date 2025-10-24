@@ -7,6 +7,18 @@ import json
 import os
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+import logging
+
+# Setup simple audit logger
+LOGGER_NAME = 'access_audit'
+audit_logger = logging.getLogger(LOGGER_NAME)
+if not audit_logger.handlers:
+    audit_logger.setLevel(logging.INFO)
+    fh = logging.FileHandler('access.log')
+    fh.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    fh.setFormatter(formatter)
+    audit_logger.addHandler(fh)
 
 
 class StudentDatabase:
@@ -125,20 +137,26 @@ class StudentDatabase:
             Tuple of (success, message)
         """
         if student_id not in self.students:
+            # Audit: failed deduction - student not found
+            audit_logger.info(f"DEDUCT_FAIL - {student_id} - reason=not_found - amount={amount}")
             return False, "Student not found"
         
         student = self.students[student_id]
         current_balance = student["balance"]
         
         if current_balance < amount:
+            # Audit: insufficient balance
+            audit_logger.info(f"DEDUCT_FAIL - {student_id} - reason=insufficient - current={current_balance} - amount={amount}")
             return False, f"Insufficient balance. Current: €{current_balance:.2f}, Required: €{amount:.2f}"
         
         # Deduct amount and update access info
         student["balance"] = current_balance - amount
         student["last_access"] = datetime.now().isoformat()
         student["access_count"] += 1
-        
+
         self.save_database()
+        # Audit: successful deduction
+        audit_logger.info(f"DEDUCT_SUCCESS - {student_id} - amount={amount} - remaining={student['balance']}")
         return True, f"Access granted. Remaining balance: €{student['balance']:.2f}"
     
     def add_balance(self, student_id: str, amount: float) -> bool:
@@ -153,11 +171,27 @@ class StudentDatabase:
             True if added successfully, False if student not found
         """
         if student_id not in self.students:
+            audit_logger.info(f"ADD_FAIL - {student_id} - reason=not_found - amount={amount}")
             return False
         
         self.students[student_id]["balance"] += amount
         self.save_database()
+        audit_logger.info(f"ADD_SUCCESS - {student_id} - amount={amount} - new_balance={self.students[student_id]['balance']}")
         return True
+
+    def audit_balance_check(self, student_id: str, actor: Optional[str] = None) -> None:
+        """Log a balance consultation for traceability.
+
+        Args:
+            student_id: student whose balance was checked
+            actor: who triggered the check (username) - optional
+        """
+        actor_part = f"actor={actor}" if actor else "actor=unknown"
+        if student_id in self.students:
+            bal = self.students[student_id].get('balance', 0.0)
+            audit_logger.info(f"BALANCE_CHECK - {student_id} - {actor_part} - balance={bal}")
+        else:
+            audit_logger.info(f"BALANCE_CHECK_FAIL - {student_id} - {actor_part} - reason=not_found")
     
     def student_exists(self, student_id: str) -> bool:
         """Check if student exists in database"""
